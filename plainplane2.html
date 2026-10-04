@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Flight Simulator v5.1 - Stable Flight</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; user-select: none; background: #000; }
+        canvas { display: block; }
+        .hud-glass { background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.1); }
+        .text-shadow { text-shadow: 0 0 8px rgba(0, 0, 0, 0.7); }
+        #stall-warning { animation: blink 0.3s step-start 0s infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        
+        #editor-preview-container {
+            width: 100%;
+            height: 100%;
+            min-height: 300px;
+            background: radial-gradient(circle at center, #1e293b, #0f172a);
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body class="bg-gray-900">
+
+    <!-- HUD Systems -->
+    <div id="hud" class="fixed bottom-6 left-6 text-white mono hud-glass p-6 rounded-xl z-10 text-shadow pointer-events-none transition-all">
+        <div class="flex justify-between w-56 mb-1"><span>THRUST</span> <span id="throttle-display" class="font-bold text-green-400">0</span>%</div>
+        <div class="w-full bg-gray-700 h-1 rounded-full mb-4 overflow-hidden">
+            <div id="throttle-bar" class="bg-green-500 h-full transition-all duration-100" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between w-56"><span>AIRSPEED</span> <span id="speed-display" class="font-bold text-blue-300 text-xl">0</span> <span class="text-[10px] opacity-50">KTS</span></div>
+        <div class="flex justify-between w-56"><span>ALTITUDE</span> <span id="altitude-display" class="font-bold text-yellow-300 text-xl">0</span> <span class="text-[10px] opacity-50">FT</span></div>
+        
+        <div id="stall-warning" class="hidden text-red-500 font-bold text-3xl mt-4 text-center border-2 border-red-500 py-1 rounded">STALL</div>
+        
+        <div class="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
+            <span id="gear-indicator" class="text-[10px] font-bold px-2 py-1 rounded bg-green-500/20 text-green-400">GEAR: DOWN</span>
+            <span id="status-msg" class="text-white/40 text-[9px] uppercase tracking-tighter">System Nominal</span>
+        </div>
+    </div>
+
+    <!-- Controls Overlay -->
+    <div class="fixed top-6 left-6 text-white mono hud-glass p-5 rounded-xl z-10 text-shadow pointer-events-none">
+        <h3 class="font-bold text-[10px] mb-3 opacity-40 uppercase tracking-widest">Flight Deck Controls</h3>
+        <ul class="list-none space-y-2 text-[11px]">
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">W/S</kbd> Pitch Inertia</li>
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">A/D</kbd> Roll Inertia</li>
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">Q/E</kbd> Rudder</li>
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">SHFT</kbd> Max Power</li>
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">CTRL</kbd> Idle Power</li>
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">G</kbd> Gear Toggle</li>
+            <li class="flex items-center"><kbd class="bg-white/10 px-1.5 py-0.5 rounded mr-3 text-yellow-300 w-10 text-center">B</kbd> Brakes</li>
+        </ul>
+    </div>
+
+    <button id="modifyButton" class="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl font-bold z-20 shadow-2xl border border-white/20 transition-all active:scale-95 uppercase tracking-widest text-xs">
+        Modify Aircraft
+    </button>
+
+    <!-- Game Over Screen -->
+    <div id="gameOverModal" class="hidden fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-10 rounded-2xl text-center shadow-2xl border border-white/10 max-w-md w-full">
+            <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <div class="w-8 h-8 bg-red-500 rounded-full animate-ping"></div>
+            </div>
+            <h2 id="end-title" class="text-3xl font-black mb-2 text-white uppercase tracking-tighter">Crashed</h2>
+            <p id="end-reason" class="text-gray-400 mb-8 text-sm leading-relaxed">Airframe stress exceeded safe operating parameters.</p>
+            <button onclick="resetGame()" class="w-full bg-white hover:bg-gray-200 text-black px-8 py-4 rounded-xl font-black transition-colors uppercase tracking-widest text-xs">
+                Request Replacement
+            </button>
+        </div>
+    </div>
+
+    <!-- Hangar Modal -->
+    <div id="modifyModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-40 p-4 backdrop-blur-md">
+        <div class="bg-white rounded-3xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden shadow-2xl">
+            <div class="p-6 border-b flex justify-between items-center bg-gray-50">
+                <div>
+                    <h2 class="text-2xl font-black text-gray-900 leading-none">THE HANGAR</h2>
+                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Experimental Division</p>
+                </div>
+                <button id="closeEditor" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-200 transition-colors text-2xl">&times;</button>
+            </div>
+
+            <div class="flex-1 flex flex-col md:flex-row overflow-hidden">
+                <div class="w-full md:w-3/5 bg-slate-900 relative p-8 flex flex-col items-center justify-center">
+                    <div id="editor-preview-container" class="shadow-2xl border border-white/5"></div>
+                    <div class="absolute bottom-10 flex space-x-4">
+                        <div class="bg-black/50 px-4 py-2 rounded-full text-[10px] text-white/70 font-mono">DRAG TO ROTATE</div>
+                    </div>
+                </div>
+
+                <div class="w-full md:w-2/5 p-8 overflow-y-auto bg-white border-l space-y-8">
+                    <div>
+                        <h4 class="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-4">Configuration</h4>
+                        <div class="space-y-4">
+                            <div class="space-y-1">
+                                <label class="text-[11px] font-bold text-gray-400">AIRFRAME SELECTION</label>
+                                <select id="partFuselage" class="w-full p-3 border-2 border-gray-100 rounded-xl bg-gray-50 text-sm font-bold focus:border-blue-500 outline-none transition-all">
+                                    <option value="cessna">CESSNA 172 (STABLE)</option>
+                                    <option value="fighter">F-16 INTERCEPTOR (AGILE)</option>
+                                    <option value="airliner">BOEING 747 (HEAVY)</option>
+                                </select>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[11px] font-bold text-gray-400">WING GEOMETRY</label>
+                                <select id="partWings" class="w-full p-3 border-2 border-gray-100 rounded-xl bg-gray-50 text-sm font-bold focus:border-blue-500 outline-none transition-all">
+                                    <option value="straight">STRAIGHT (HIGH LIFT)</option>
+                                    <option value="swept">STRAIGHT (HIGH SPEED)</option>
+                                    <option value="delta">DELTA (SUPERSONIC)</option>
+                                </select>
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[11px] font-bold text-gray-400">STABILIZER TYPE</label>
+                                <select id="partTail" class="w-full p-3 border-2 border-gray-100 rounded-xl bg-gray-50 text-sm font-bold focus:border-blue-500 outline-none transition-all">
+                                    <option value="standard">CONVENTIONAL</option>
+                                    <option value="t-tail">T-TAIL</option>
+                                    <option value="v-tail">V-TAIL</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-6 border-t border-gray-100">
+                        <h4 class="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-4">Aesthetics</h4>
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="space-y-2">
+                                <input type="color" id="colorBody" value="#ffffff" class="w-full h-12 cursor-pointer rounded-xl border-0 overflow-hidden">
+                                <span class="block text-[9px] text-center font-bold text-gray-400">FUSELAGE</span>
+                            </div>
+                            <div class="space-y-2">
+                                <input type="color" id="colorWings" value="#cc0000" class="w-full h-12 cursor-pointer rounded-xl border-0 overflow-hidden">
+                                <span class="block text-[9px] text-center font-bold text-gray-400">WINGS</span>
+                            </div>
+                            <div class="space-y-2">
+                                <input type="color" id="colorDetail" value="#222222" class="w-full h-12 cursor-pointer rounded-xl border-0 overflow-hidden">
+                                <span class="block text-[9px] text-center font-bold text-gray-400">TRIM</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-10">
+                        <button id="applyChanges" class="w-full bg-gray-900 hover:bg-blue-600 text-white font-black py-5 rounded-2xl shadow-xl transition-all uppercase tracking-widest text-xs">
+                            Accept Aircraft Specs
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Global Setup ---
+        let scene, camera, renderer, clock;
+        let plane, cityMesh, sky;
+        let inputs = { w: false, s: false, a: false, d: false, q: false, e: false, shift: false, ctrl: false, g: false, b: false };
+        
+        let buildingData = [];
+        let airports = [
+            { x: 0, z: 800, rot: 0 },
+            { x: 5000, z: -4000, rot: Math.PI / 4 },
+            { x: -6000, z: 3000, rot: -Math.PI / 2 },
+            { x: 15000, z: 12000, rot: Math.PI / 6 } // New Desert Outpost
+        ];
+
+        const physics = {
+            pos: new THREE.Vector3(0, 1.4, 800),
+            vel: new THREE.Vector3(0, 0, 0),
+            rotVel: new THREE.Vector3(0, 0, 0),
+            throttle: 0,
+            speed: 0,
+            gearDown: true,
+            gearTransition: 1.0,
+            state: 'flying',
+            climbRate: 0,
+            aoa: 0
+        };
+
+        let config = {
+            fuselage: 'cessna',
+            wings: 'straight',
+            tail: 'standard',
+            colors: { body: '#ffffff', wings: '#cc0000', detail: '#222222' }
+        };
+
+        let specs = { 
+            thrust: 500, 
+            mass: 12, 
+            drag: 0.006, 
+            lift: 0.16, 
+            agility: 1.2,
+            damping: 0.96
+        };
+
+        // Editor Vars
+        let sceneEd, cameraEd, rendererEd, planeEdGroup;
+        let isDragging = false, lastMouse = { x: 0, y: 0 };
+
+        // --- 2. Initialize ---
+        function init() {
+            try {
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x87CEEB);
+                scene.fog = new THREE.Fog(0x87CEEB, 1000, 15000);
+
+                camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 25000);
+                
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                document.body.appendChild(renderer.domElement);
+
+                clock = new THREE.Clock();
+
+                scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+                const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+                sun.position.set(500, 1500, 1000);
+                sun.castShadow = true;
+                sun.shadow.camera.left = -5000; sun.shadow.camera.right = 5000;
+                sun.shadow.camera.top = 5000; sun.shadow.camera.bottom = -5000;
+                sun.shadow.mapSize.width = 2048; sun.shadow.mapSize.height = 2048;
+                scene.add(sun);
+
+                createEnvironment();
+                createPlane();
+                setupInputs();
+                initEditor();
+                
+                animate();
+            } catch (e) { console.error(e); }
+        }
+
+        function createPlane() {
+            if (plane) scene.remove(plane);
+            plane = buildAircraft(config);
+            scene.add(plane);
+            resetPhysics();
+        }
+
+        function resetPhysics() {
+            physics.pos.set(0, 1.35, 800);
+            physics.vel.set(0, 0, 0);
+            physics.rotVel.set(0, 0, 0);
+            physics.throttle = 0;
+            physics.speed = 0;
+            physics.state = 'flying';
+            physics.gearDown = true;
+            physics.gearTransition = 1.0;
+            
+            plane.position.copy(physics.pos);
+            plane.rotation.set(0, 0, 0);
+            
+            if (config.fuselage === 'fighter') { 
+                specs = { thrust: 950, mass: 10, drag: 0.003, lift: 0.14, agility: 2.4, damping: 0.94 }; 
+            } else if (config.fuselage === 'airliner') { 
+                specs = { thrust: 1400, mass: 65, drag: 0.009, lift: 0.22, agility: 0.6, damping: 0.98 }; 
+            } else { 
+                specs = { thrust: 550, mass: 14, drag: 0.006, lift: 0.18, agility: 1.4, damping: 0.95 }; 
+            }
+            
+            updateHUD();
+        }
+
+        function buildAircraft(cfg) {
+            const root = new THREE.Group();
+            const matBody = new THREE.MeshStandardMaterial({ color: cfg.colors.body, roughness: 0.3, metalness: 0.4 });
+            const matWing = new THREE.MeshStandardMaterial({ color: cfg.colors.wings, side: THREE.DoubleSide, roughness: 0.4 });
+            const matDark = new THREE.MeshStandardMaterial({ color: cfg.colors.detail, metalness: 0.8, roughness: 0.2 });
+            const matGlass = new THREE.MeshStandardMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5, metalness: 1 });
+
+            let bodyLen = 8;
+            if (cfg.fuselage === 'cessna') {
+                const b = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 7), matBody);
+                b.position.y = 0.4; root.add(b);
+                const c = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.7, 1.8), matGlass);
+                c.position.set(0, 1.1, 0.8); root.add(c);
+                const prop = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.2, 0.05), matDark);
+                prop.position.z = 3.6; prop.position.y = 0.4; prop.name = "prop";
+                root.add(prop);
+            } else if (cfg.fuselage === 'fighter') {
+                bodyLen = 12;
+                const b = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 9, 12), matBody);
+                b.rotation.x = Math.PI/2; root.add(b);
+                const nose = new THREE.Mesh(new THREE.ConeGeometry(0.7, 3.5, 12), matDark);
+                nose.rotation.x = Math.PI/2; nose.position.z = 6.2; root.add(nose);
+                const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 16), matGlass);
+                cockpit.scale.set(1, 0.7, 2.8); cockpit.position.set(0, 0.6, 1.5); root.add(cockpit);
+                const intake = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.5, 2), matDark);
+                intake.position.set(0, -0.6, 1); root.add(intake);
+            } else {
+                bodyLen = 18;
+                const b = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 15, 20), matBody);
+                b.rotation.x = Math.PI/2; root.add(b);
+                const nose = new THREE.Mesh(new THREE.SphereGeometry(1.8, 20, 20, 0, Math.PI*2, 0, Math.PI/2), matBody);
+                nose.rotation.x = Math.PI/2; nose.position.z = 7.5; root.add(nose);
+                const tail = new THREE.Mesh(new THREE.ConeGeometry(1.8, 5, 20), matBody);
+                tail.rotation.x = -Math.PI/2; tail.position.z = -10; root.add(tail);
+                const engL = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 3, 12), matDark);
+                engL.rotation.x = Math.PI/2; engL.position.set(-4, -0.8, 1); root.add(engL);
+                const engR = engL.clone(); engR.position.x = 4; root.add(engR);
+            }
+
+            // Wings
+            const wingGroup = new THREE.Group();
+            if (cfg.wings === 'straight') {
+                const w = new THREE.Mesh(new THREE.BoxGeometry(14, 0.1, 2.8), matWing);
+                w.position.y = (cfg.fuselage==='cessna' ? 1.1 : 0);
+                wingGroup.add(w);
+            } else if (cfg.wings === 'swept') {
+                const s = new THREE.Shape();
+                s.moveTo(0,0); s.lineTo(8, -4); s.lineTo(8, -6.5); s.lineTo(0, -3);
+                const g = new THREE.ExtrudeGeometry(s, {depth:0.1, bevelEnabled:false});
+                const l = new THREE.Mesh(g, matWing);
+                l.rotation.x = Math.PI/2; l.rotation.y = Math.PI; l.position.set(0.4, 0, 1.5);
+                const r = l.clone(); r.scale.x = -1; r.position.x = -0.4;
+                wingGroup.add(l, r);
+            } else { // Delta
+                const s = new THREE.Shape();
+                s.moveTo(0,0); s.lineTo(6.5, -7.5); s.lineTo(0, -6.5);
+                const g = new THREE.ExtrudeGeometry(s, {depth:0.1, bevelEnabled:false});
+                const l = new THREE.Mesh(g, matWing);
+                l.rotation.x = Math.PI/2; l.rotation.y = Math.PI; l.position.set(0.5, 0, 2);
+                const r = l.clone(); r.scale.x = -1; r.position.x = -0.5;
+                wingGroup.add(l, r);
+            }
+            root.add(wingGroup);
+
+            // Tail
+            const tailG = new THREE.Group();
+            tailG.position.z = -bodyLen/2 - 0.2;
+            if (cfg.tail === 'standard') {
+                const v = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.5, 2), matWing); v.position.y = 1.1;
+                const h = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.1, 1.8), matWing); h.position.y = 0.4;
+                tailG.add(v, h);
+            } else if (cfg.tail === 't-tail') {
+                const v = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3, 2), matWing); v.position.y = 1.5;
+                const h = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.1, 1.8), matWing); h.position.y = 3;
+                tailG.add(v, h);
+            } else {
+                const l = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.8, 2), matWing);
+                l.rotation.z = Math.PI/4; l.position.y = 1;
+                const r = l.clone(); r.rotation.z = -Math.PI/4;
+                tailG.add(l, r);
+            }
+            root.add(tailG);
+
+            // Gear
+            const gear = new THREE.Group(); gear.name = "gear";
+            const wheelMat = new THREE.MeshStandardMaterial({color: 0x111111, roughness: 0.9});
+            const strutMat = new THREE.MeshStandardMaterial({color: 0x888888, metalness: 0.6});
+            const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 12);
+            
+            const fw = new THREE.Mesh(wheelGeo, wheelMat); fw.rotation.z = Math.PI/2; fw.position.set(0, -1.1, bodyLen/2 - 1.5);
+            const fs = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.0, 0.15), strutMat); fs.position.set(0, -0.6, bodyLen/2 - 1.5);
+            gear.add(fw, fs);
+            
+            const rw1 = fw.clone(); rw1.position.set(-2, -1.1, -1);
+            const rs1 = fs.clone(); rs1.position.set(-2, -0.6, -1);
+            const rw2 = fw.clone(); rw2.position.set(2, -1.1, -1);
+            const rs2 = fs.clone(); rs2.position.set(2, -0.6, -1);
+            gear.add(rw1, rs1, rw2, rs2);
+            root.add(gear);
+
+            root.traverse(n => { if(n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+            return root;
+        }
+
+        function createEnvironment() {
+            const ground = new THREE.Mesh(
+                new THREE.PlaneGeometry(80000, 80000), 
+                new THREE.MeshStandardMaterial({ color: 0x2b3d2b, roughness: 0.9 })
+            );
+            ground.rotation.x = -Math.PI/2; 
+            ground.receiveShadow = true; 
+            scene.add(ground);
+
+            airports.forEach((ap, idx) => {
+                const apGroup = new THREE.Group();
+                apGroup.position.set(ap.x, 0.01, ap.z);
+                apGroup.rotation.y = ap.rot;
+
+                const rWidth = 120;
+                const rLength = 6000;
+                const runway = new THREE.Mesh(new THREE.PlaneGeometry(rWidth, rLength), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 }));
+                runway.rotation.x = -Math.PI/2; 
+                runway.receiveShadow = true; 
+                apGroup.add(runway);
+
+                for(let i = -rLength/2 + 100; i < rLength/2; i += 120) {
+                    const mark = new THREE.Mesh(new THREE.PlaneGeometry(4, 50), new THREE.MeshStandardMaterial({color: 0xeeeeee}));
+                    mark.rotation.x = -Math.PI/2; mark.position.set(0, 0.02, i);
+                    apGroup.add(mark);
+                }
+                scene.add(apGroup);
+            });
+
+            const count = 5000;
+            const bGeo = new THREE.BoxGeometry(1, 1, 1); bGeo.translate(0, 0.5, 0);
+            cityMesh = new THREE.InstancedMesh(bGeo, new THREE.MeshStandardMaterial({color: 0x556677, roughness: 0.3}), count);
+            const dummy = new THREE.Object3D();
+            
+            buildingData = [];
+            let i = 0;
+            while(i < count) {
+                let x = (Math.random()-0.5) * 25000;
+                let z = (Math.random()-0.5) * 25000;
+                
+                // Keep clear of ALL airports (larger exclusion zone)
+                let tooClose = false;
+                for (let ap of airports) {
+                    const dx = x - ap.x;
+                    const dz = z - ap.z;
+                    const distSq = dx*dx + dz*dz;
+                    if (distSq < 1500 * 1500) { tooClose = true; break; }
+                }
+                
+                if (tooClose) continue;
+
+                const w = 40 + Math.random() * 120;
+                const h = 50 + Math.random() * 700;
+                const d = 40 + Math.random() * 120;
+
+                dummy.position.set(x, 0, z);
+                dummy.scale.set(w, h, d);
+                dummy.updateMatrix();
+                cityMesh.setMatrixAt(i, dummy.matrix);
+
+                buildingData.push({
+                    xMin: x - w/2, xMax: x + w/2,
+                    zMin: z - d/2, zMax: z + d/2,
+                    height: h
+                });
+                i++;
+            }
+            scene.add(cityMesh);
+        }
+
+        function setupInputs() {
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            document.addEventListener('keydown', e => { 
+                if(e.code in keyMap) inputs[keyMap[e.code]] = true; 
+                if(e.code==='KeyG') toggleGear(); 
+            });
+            document.addEventListener('keyup', e => { if(e.code in keyMap) inputs[keyMap[e.code]] = false; });
+            const keyMap = { KeyW:'w', KeyS:'s', KeyA:'a', KeyD:'d', KeyQ:'q', KeyE:'e', ShiftLeft:'shift', ControlLeft:'ctrl', KeyB:'b' };
+
+            document.getElementById('modifyButton').onclick = () => { document.getElementById('modifyModal').classList.remove('hidden'); updateEditorPreview(); };
+            document.getElementById('closeEditor').onclick = () => document.getElementById('modifyModal').classList.add('hidden');
+            document.getElementById('applyChanges').onclick = () => { createPlane(); document.getElementById('modifyModal').classList.add('hidden'); };
+            
+            ['partFuselage', 'partWings', 'partTail'].forEach(id => {
+                document.getElementById(id).onchange = e => { config[id.replace('part','').toLowerCase()] = e.target.value; updateEditorPreview(); };
+            });
+            ['colorBody', 'colorWings', 'colorDetail'].forEach(id => {
+                document.getElementById(id).oninput = e => { config.colors[id.replace('color','').toLowerCase()] = e.target.value; updateEditorPreview(); };
+            });
+        }
+
+        function toggleGear() { 
+            physics.gearDown = !physics.gearDown;
+            const el = document.getElementById('gear-indicator');
+            el.innerText = `GEAR: ${physics.gearDown ? 'DOWN' : 'UP'}`;
+            el.className = `text-[10px] font-bold px-2 py-1 rounded ${physics.gearDown ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`;
+        }
+
+        function checkCollisions() {
+            const px = plane.position.x;
+            const py = plane.position.y;
+            const pz = plane.position.z;
+
+            // Simplified collision check
+            for (let i = 0; i < buildingData.length; i++) {
+                const b = buildingData[i];
+                if (Math.abs(px - (b.xMin + b.xMax)/2) > 200 || Math.abs(pz - (b.zMin + b.zMax)/2) > 200) continue;
+
+                if (px > b.xMin && px < b.xMax && pz > b.zMin && pz < b.zMax) {
+                    if (py < b.height) return true;
+                }
+            }
+            return false;
+        }
+
+        // --- 3. Physics & Animation ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta(), 0.1);
+            if (physics.state === 'crashed') return;
+
+            if (inputs.shift) physics.throttle = Math.min(1, physics.throttle + 0.6 * dt);
+            if (inputs.ctrl) physics.throttle = Math.max(0, physics.throttle - 0.6 * dt);
+
+            const onGround = plane.position.y <= 1.35;
+            const power = physics.throttle * specs.thrust;
+            
+            const baseDrag = (physics.speed * physics.speed * specs.drag);
+            const parasiticDrag = (physics.gearTransition * physics.speed * 0.08);
+            const totalDrag = baseDrag + parasiticDrag;
+            
+            const brakeForce = (onGround && inputs.b) ? 55 : 0;
+            const groundFriction = onGround ? 4 : 0;
+            
+            let accel = (power - totalDrag - groundFriction - brakeForce) / specs.mass;
+            physics.speed = Math.max(0, physics.speed + accel * dt);
+
+            const controlAuthority = Math.min(1.2, physics.speed / 65); 
+            
+            if (inputs.w) physics.rotVel.x += specs.agility * controlAuthority * dt;
+            if (inputs.s) physics.rotVel.x -= specs.agility * controlAuthority * dt;
+            if (inputs.d) physics.rotVel.z += specs.agility * 1.5 * controlAuthority * dt;
+            if (inputs.a) physics.rotVel.z -= specs.agility * 1.5 * controlAuthority * dt;
+            if (inputs.q) physics.rotVel.y += specs.agility * 0.5 * controlAuthority * dt;
+            if (inputs.e) physics.rotVel.y -= specs.agility * 0.5 * controlAuthority * dt;
+
+            physics.rotVel.multiplyScalar(specs.damping);
+
+            plane.rotateX(physics.rotVel.x * dt);
+            plane.rotateY(physics.rotVel.y * dt);
+            plane.rotateZ(physics.rotVel.z * dt);
+
+            const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(plane.quaternion);
+            const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion);
+            const upWorld = new THREE.Vector3(0, 1, 0);
+            const nosePitch = forward.dot(upWorld); 
+            
+            const liftMagnitude = specs.lift * physics.speed * (1.0 + nosePitch * 0.5); 
+            const gravity = 9.8 * specs.mass;
+            
+            const liftForce = localUp.clone().multiplyScalar(liftMagnitude);
+            const gravityForce = new THREE.Vector3(0, -gravity, 0);
+            
+            const netVertical = liftForce.clone().add(gravityForce).multiplyScalar(dt / specs.mass);
+            
+            const movement = forward.clone().multiplyScalar(physics.speed * dt);
+            plane.position.add(movement);
+            
+            if (!onGround || netVertical.y > 0) {
+                plane.position.y += netVertical.y;
+            }
+
+            if (checkCollisions()) {
+                physics.state = 'crashed';
+                showEnd("Structural Failure", "Collision with urban infrastructure.");
+            } else if (plane.position.y < 1.34) {
+                const tilt = Math.abs(plane.rotation.z);
+                if (physics.speed > 220 || tilt > 0.5 || !physics.gearDown || Math.abs(netVertical.y/dt) > 15) {
+                    physics.state = 'crashed';
+                    showEnd("Airframe Destroyed", "Hard landing or incorrect configuration.");
+                } else {
+                    plane.position.y = 1.34;
+                    physics.rotVel.x *= 0.8;
+                    physics.rotVel.z *= 0.5;
+                    plane.rotation.x *= 0.9;
+                    plane.rotation.z *= 0.9;
+                }
+            }
+
+            const gear = plane.getObjectByName('gear');
+            if(gear) {
+                const target = physics.gearDown ? 1.0 : 0.0;
+                physics.gearTransition += (target - physics.gearTransition) * 2 * dt;
+                gear.scale.setScalar(Math.max(0.001, physics.gearTransition));
+                gear.visible = physics.gearTransition > 0.05;
+            }
+            const prop = plane.getObjectByName('prop');
+            if(prop) prop.rotation.z += (physics.speed * 0.05 + physics.throttle * 2.5);
+
+            updateCamera();
+            updateHUD();
+            renderer.render(scene, camera);
+        }
+
+        function updateCamera() {
+            // Camera distance is constant now - no longer falls behind at speed
+            const offset = new THREE.Vector3(0, 6, -30).applyQuaternion(plane.quaternion);
+            const targetPos = plane.position.clone().add(offset);
+            
+            // Hard snap camera to position to eliminate lag completely
+            camera.position.copy(targetPos);
+            
+            const lookOffset = new THREE.Vector3(0, 2, 60).applyQuaternion(plane.quaternion);
+            camera.lookAt(plane.position.clone().add(lookOffset));
+        }
+
+        function updateHUD() {
+            const throttlePct = Math.round(physics.throttle * 100);
+            document.getElementById('throttle-display').innerText = throttlePct;
+            document.getElementById('throttle-bar').style.width = throttlePct + "%";
+            document.getElementById('speed-display').innerText = Math.round(physics.speed);
+            document.getElementById('altitude-display').innerText = Math.max(0, Math.round(plane.position.y * 3.28));
+            
+            const stall = document.getElementById('stall-warning');
+            if (physics.speed < 55 && plane.position.y > 15) stall.classList.remove('hidden');
+            else stall.classList.add('hidden');
+
+            const msg = document.getElementById('status-msg');
+            if (plane.position.y < 3) msg.innerText = physics.speed > 10 ? "DEPARTURE" : "GROUND OPS";
+            else msg.innerText = "CRUISE";
+        }
+
+        function showEnd(title, reason) {
+            document.getElementById('gameOverModal').classList.remove('hidden');
+            document.getElementById('end-title').innerText = title;
+            document.getElementById('end-reason').innerText = reason;
+        }
+
+        function resetGame() {
+            document.getElementById('gameOverModal').classList.add('hidden');
+            createPlane();
+        }
+
+        function initEditor() {
+            sceneEd = new THREE.Scene();
+            sceneEd.background = null;
+            sceneEd.add(new THREE.AmbientLight(0xffffff, 1.2));
+            const d = new THREE.DirectionalLight(0xffffff, 0.8); d.position.set(5,10,5); sceneEd.add(d);
+            
+            cameraEd = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+            cameraEd.position.set(16, 6, 16); cameraEd.lookAt(0,0,0);
+
+            const container = document.getElementById('editor-preview-container');
+            rendererEd = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            rendererEd.setClearColor(0x000000, 0);
+            rendererEd.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(rendererEd.domElement);
+
+            planeEdGroup = new THREE.Group();
+            sceneEd.add(planeEdGroup);
+
+            const canvas = rendererEd.domElement;
+            canvas.onmousedown = e => { isDragging = true; lastMouse = {x:e.clientX, y:e.clientY}; };
+            window.onmouseup = () => isDragging = false;
+            window.onmousemove = e => {
+                if(isDragging) {
+                    planeEdGroup.rotation.y += (e.clientX - lastMouse.x) * 0.01;
+                    planeEdGroup.rotation.x += (e.clientY - lastMouse.y) * 0.01;
+                    lastMouse = {x:e.clientX, y:e.clientY};
+                }
+            };
+            
+            function renderEd() {
+                requestAnimationFrame(renderEd);
+                if(!document.getElementById('modifyModal').classList.contains('hidden')) {
+                    if(!isDragging) planeEdGroup.rotation.y += 0.005;
+                    rendererEd.render(sceneEd, cameraEd);
+                }
+            }
+            renderEd();
+        }
+
+        function updateEditorPreview() {
+            while(planeEdGroup.children.length) planeEdGroup.remove(planeEdGroup.children[0]);
+            const previewPlane = buildAircraft(config);
+            planeEdGroup.add(previewPlane);
+            
+            const c = document.getElementById('editor-preview-container');
+            rendererEd.setSize(c.clientWidth, c.clientHeight);
+            cameraEd.aspect = c.clientWidth / c.clientHeight;
+            cameraEd.updateProjectionMatrix();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

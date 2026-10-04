@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Optimized Flight Simulator</title>
+    <!-- 1. Load TailwindCSS for the UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Load three.js (the 3D library) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        /* Make the canvas fill the entire screen */
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        /* Custom styles for the HUD text shadow */
+        .text-shadow {
+            text-shadow: 0 0 8px rgba(0, 0, 0, 0.7);
+        }
+        /* Style for the stall warning */
+        #stall-warning {
+            animation: blink 1s step-start 0s infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+        /* Style for the 3D editor preview */
+        #editor-preview {
+            width: 100%;
+            height: 300px; /* Set a fixed height for the preview canvas */
+            background-color: #f0f0f0;
+            border-radius: 8px;
+            cursor: grab;
+        }
+        #editor-preview:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+
+    <!-- 3. Heads-Up Display (HUD) UI -->
+    <div id="hud" class="fixed bottom-4 left-4 text-white font-mono bg-black bg-opacity-50 p-4 rounded-lg z-10 text-shadow">
+        <div>Throttle: <span id="throttle-display" class="font-bold text-green-400">0</span>%</div>
+        <div>Speed: <span id="speed-display" class="font-bold">0</span> kts</div>
+        <div>Altitude: <span id="altitude-display" class="font-bold">0</span> ft</div>
+        <!-- Stall Warning -->
+        <div id="stall-warning" class="hidden text-red-500 font-bold text-2xl mt-2">STALL</div>
+        <!-- Takeoff Warning (optional hint) -->
+        <div id="takeoff-hint" class="hidden text-yellow-400 text-sm mt-1">Speed too low to lift</div>
+    </div>
+
+    <!-- 4. Controls Info Box -->
+    <div class="fixed top-4 left-4 text-white font-mono bg-black bg-opacity-50 p-4 rounded-lg z-10 text-shadow max-w-xs sm:max-w-none">
+        <h3 class="font-bold text-lg mb-2">Controls</h3>
+        <ul class="list-none space-y-1">
+            <li><span class="font-bold inline-block w-20">W / S</span>: Pitch Up / Down</li>
+            <li><span class="font-bold inline-block w-20">A / D</span>: Roll Left / Right</li>
+            <li><span class="font-bold inline-block w-20">Q / E</span>: Yaw Left / Right</li>
+            <li><span class="font-bold inline-block w-20">Shift / Ctrl</span>: Throttle Up / Down</li>
+        </ul>
+    </div>
+
+    <!-- 5. Crash Modal -->
+    <div id="crashModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-20">
+        <div class="bg-white p-8 rounded-lg text-center shadow-xl">
+            <h2 id="crash-title" class="text-3xl font-bold text-red-600">CRASHED!</h2>
+            <p id="crash-message" class="my-4 text-gray-700">You've hit the ground. Resetting the simulation.</p>
+            <button id="resetButton" class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-bold">
+                Fly Again
+            </button>
+        </div>
+    </div>
+    
+    <!-- 7. Modify Plane Button -->
+    <button id="modifyButton" class="fixed bottom-4 right-4 bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-bold z-10 text-shadow">
+        Modify Plane
+    </button>
+
+    <!-- 8. Plane Editor Modal -->
+    <div id="modifyModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-20 overflow-y-auto py-10">
+        <div class="bg-white p-8 rounded-lg text-left shadow-xl w-full max-w-2xl">
+            <h2 class="text-3xl font-bold text-gray-800 text-center">Plane Editor</h2>
+            
+            <!-- 3D Preview Window -->
+            <div id="editor-preview" class="my-4"></div>
+            <p class="text-center text-gray-600 -mt-2 mb-4">Click and drag to rotate the view</p>
+            
+            <div class="grid grid-cols-2 gap-6">
+                <!-- Left Column for parts -->
+                <div class="space-y-4">
+                    <!-- Engine Options -->
+                    <div>
+                        <h3 class="font-bold text-lg mb-2">Engines</h3>
+                        <div class="flex space-x-4">
+                            <button id="engineSingle" class="part-button engine-button flex-1 bg-blue-500 text-white px-4 py-2 rounded-lg">Single</button>
+                            <button id="engineDual" class="part-button engine-button flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg">Dual</button>
+                        </div>
+                    </div>
+
+                    <!-- Cockpit Options -->
+                    <div>
+                        <h3 class="font-bold text-lg mb-2">Cockpit</h3>
+                        <div class="flex space-x-4">
+                            <button id="cockpitSleek" class="part-button cockpit-button flex-1 bg-blue-500 text-white px-4 py-2 rounded-lg">Sleek</button>
+                            <button id="cockpitBubble" class="part-button cockpit-button flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg">Bubble</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column for parts -->
+                <div class="space-y-4">
+                    <!-- Wing Options -->
+                    <div>
+                        <h3 class="font-bold text-lg mb-2">Wings</h3>
+                        <div class="flex space-x-4">
+                            <button id="wingsNormal" class="part-button wing-button flex-1 bg-blue-500 text-white px-4 py-2 rounded-lg">Normal</button>
+                            <button id="wingsWide" class="part-button wing-button flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg">Wide</button>
+                            <button id="wingsShort" class="part-button wing-button flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg">Short</button>
+                        </div>
+                    </div>
+
+                    <!-- Tail Fin Options -->
+                    <div>
+                        <h3 class="font-bold text-lg mb-2">Tail Fin</h3>
+                        <div class="flex space-x-4">
+                            <button id="tailNormal" class="part-button tail-button flex-1 bg-blue-500 text-white px-4 py-2 rounded-lg">Normal</button>
+                            <button id="tailLarge" class="part-button tail-button flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg">Large</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Color Options -->
+            <div class="mt-6">
+                <h3 class="font-bold text-lg mb-2 text-center">Body Color</h3>
+                <div class="flex justify-center space-x-4 my-6">
+                    <button id="colorSilver" class="part-button color-button w-12 h-12 rounded-full border-4 border-blue-500" style="background-color: #cccccc;" title="Silver"></button>
+                    <button id="colorRed" class="part-button color-button w-12 h-12 rounded-full border-4 border-transparent hover:border-gray-400" style="background-color: #ff0000;" title="Red"></button>
+                    <button id="colorGreen" class="part-button color-button w-12 h-12 rounded-full border-4 border-transparent hover:border-gray-400" style="background-color: #00ff00;" title="Green"></button>
+                    <button id="colorBlue" class="part-button color-button w-12 h-12 rounded-full border-4 border-transparent hover:border-gray-400" style="background-color: #0000ff;" title="Blue"></button>
+                </div>
+            </div>
+
+            <button id="doneModifyButton" class="mt-6 bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg font-bold w-full">
+                Done
+            </button>
+        </div>
+    </div>
+
+    <!-- 6. Main Simulation Script -->
+    <script>
+        // Ensure script runs after page is loaded
+        window.onload = function() {
+            
+            // --- UTILITY FUNCTION FOR GEOMETRY MERGING (Required for optimization) ---
+            // This function combines multiple BufferGeometries into a single BufferGeometry
+            function mergeBufferGeometries(geometries) {
+                const mergedGeometry = new THREE.BufferGeometry();
+                const positions = [];
+                const normals = [];
+                const colors = [];
+
+                let colorOffset = 0;
+
+                for (let i = 0; i < geometries.length; i++) {
+                    const geometry = geometries[i];
+                    
+                    // Copy attributes
+                    const pos = geometry.attributes.position.array;
+                    const nor = geometry.attributes.normal.array;
+                    const col = geometry.attributes.color.array;
+
+                    // Append to arrays
+                    positions.push(...pos);
+                    normals.push(...nor);
+                    colors.push(...col);
+                }
+
+                // Set merged attributes
+                mergedGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+                mergedGeometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+                mergedGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+
+                return mergedGeometry;
+            }
+
+            // --- GLOBAL VARIABLES ---
+            // Main simulation
+            let scene, camera, renderer, plane, ground, runway;
+            let clock = new THREE.Clock();
+            
+            // OPTIMIZED SCENERY & COLLISION
+            let mergedBuildings, mergedTrees; // The single, large merged meshes
+            let spatialGrid = {}; // Stores { 'x,z': [collisionObject1, collisionObject2, ...] }
+            const GRID_SIZE = 310; // Must match the block size for accurate partitioning
+
+            let planeBBox = new THREE.Box3(); 
+            let sceneryBBox = new THREE.Box3(); 
+
+            let planeBodyMaterial; 
+            let planeWingMaterial; 
+            let planeTailMaterial; 
+            let planeEngineMaterial; 
+            let explosionParticles = []; 
+            let isCrashed = false; 
+
+            // Editor scene variables
+            let sceneEditor, cameraEditor, rendererEditor, planeEditor;
+            let editorOrbit = 0;
+            let isDragging = false;
+            let previousMouseX = 0;
+            let editorAnimFrame; 
+            let isEditorInitialized = false; 
+
+            // Plane configuration object
+            let planeConfig = {
+                engines: 'single',
+                cockpit: 'sleek',
+                wings: 'normal',
+                tail: 'normal',
+                color: 0xcccccc
+            };
+
+            // Physics modifiers based on config
+            let physicsModifiers = {
+                lift: 1.0, thrust: 1.0, drag: 1.0, rollSpeed: 1.0, pitchSpeed: 1.0, yawSpeed: 1.0
+            };
+
+            // Flight physics state
+            let speed = 0.0; 
+            let throttle = 0.0; 
+            let pitchSpeed = 0;
+            let rollSpeed = 0;
+            let yawSpeed = 0;
+            let isStalling = false;
+
+            // Keyboard input state
+            const keys = {};
+            document.addEventListener('keydown', (e) => (keys[e.code] = true));
+            document.addEventListener('keyup', (e) => (keys[e.code] = false));
+
+            // DOM Elements
+            const throttleDisplay = document.getElementById('throttle-display');
+            const speedDisplay = document.getElementById('speed-display');
+            const altitudeDisplay = document.getElementById('altitude-display');
+            const stallWarning = document.getElementById('stall-warning');
+            const takeoffHint = document.getElementById('takeoff-hint');
+            const crashModal = document.getElementById('crashModal');
+            const crashTitle = document.getElementById('crash-title');
+            const crashMessage = document.getElementById('crash-message');
+            const resetButton = document.getElementById('resetButton');
+            
+            // Get modify modal elements
+            const modifyButton = document.getElementById('modifyButton');
+            const modifyModal = document.getElementById('modifyModal');
+            const doneModifyButton = document.getElementById('doneModifyButton');
+            const editorPreview = document.getElementById('editor-preview');
+
+            resetButton.addEventListener('click', () => {
+                crashModal.classList.add('hidden');
+                resetFlight();
+            });
+
+            // Modify modal event listeners
+            modifyButton.addEventListener('click', () => {
+                updateEditorButtons();
+                
+                if (!isEditorInitialized) {
+                    initEditorScene();
+                    isEditorInitialized = true;
+                }
+
+                rebuildPlane(planeEditor, planeConfig);
+                modifyModal.classList.remove('hidden');
+                
+                animateEditor();
+            });
+
+            doneModifyButton.addEventListener('click', () => {
+                modifyModal.classList.add('hidden');
+                rebuildPlane(plane, planeConfig); 
+                updatePhysicsModifiers(); 
+                if (editorAnimFrame) cancelAnimationFrame(editorAnimFrame); 
+            });
+
+            // Mouse controls for editor preview
+            editorPreview.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                previousMouseX = e.clientX;
+                editorPreview.style.cursor = 'grabbing';
+            });
+            window.addEventListener('mouseup', () => {
+                isDragging = false;
+                editorPreview.style.cursor = 'grab';
+            });
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                const deltaX = e.clientX - previousMouseX;
+                editorOrbit -= deltaX * 0.01; 
+                previousMouseX = e.clientX;
+            });
+
+            // Part selection listeners
+            document.getElementById('engineSingle').addEventListener('click', () => setPlanePart('engines', 'single'));
+            document.getElementById('engineDual').addEventListener('click', () => setPlanePart('engines', 'dual'));
+            document.getElementById('cockpitSleek').addEventListener('click', () => setPlanePart('cockpit', 'sleek'));
+            document.getElementById('cockpitBubble').addEventListener('click', () => setPlanePart('cockpit', 'bubble'));
+            document.getElementById('wingsNormal').addEventListener('click', () => setPlanePart('wings', 'normal'));
+            document.getElementById('wingsWide').addEventListener('click', () => setPlanePart('wings', 'wide'));
+            document.getElementById('wingsShort').addEventListener('click', () => setPlanePart('wings', 'short'));
+            document.getElementById('tailNormal').addEventListener('click', () => setPlanePart('tail', 'normal'));
+            document.getElementById('tailLarge').addEventListener('click', () => setPlanePart('tail', 'large'));
+            document.getElementById('colorSilver').addEventListener('click', () => setPlanePart('color', 0xcccccc));
+            document.getElementById('colorRed').addEventListener('click', () => setPlanePart('color', 0xff0000));
+            document.getElementById('colorGreen').addEventListener('click', () => setPlanePart('color', 0x00ff00));
+            document.getElementById('colorBlue').addEventListener('click', () => setPlanePart('color', 0x0000ff));
+
+            // Helper functions for editor
+            function setPlanePart(partType, value) {
+                planeConfig[partType] = value;
+                updateEditorButtons();
+                rebuildPlane(planeEditor, planeConfig); 
+
+                if (partType === 'color') {
+                    setPlaneColor(value);
+                }
+            }
+
+            function updateEditorButtons() {
+                document.querySelectorAll('.part-button').forEach(btn => {
+                    btn.classList.remove('bg-blue-500', 'text-white', 'border-blue-500');
+                    if (!btn.id.includes('color')) {
+                        btn.classList.add('bg-gray-200', 'text-gray-700');
+                    } else {
+                        btn.classList.add('border-transparent');
+                    }
+                });
+
+                if (planeConfig.engines === 'single') document.getElementById('engineSingle').classList.add('bg-blue-500', 'text-white');
+                else if (planeConfig.engines === 'dual') document.getElementById('engineDual').classList.add('bg-blue-500', 'text-white');
+                if (planeConfig.cockpit === 'sleek') document.getElementById('cockpitSleek').classList.add('bg-blue-500', 'text-white');
+                else if (planeConfig.cockpit === 'bubble') document.getElementById('cockpitBubble').classList.add('bg-blue-500', 'text-white');
+                if (planeConfig.wings === 'normal') document.getElementById('wingsNormal').classList.add('bg-blue-500', 'text-white');
+                else if (planeConfig.wings === 'wide') document.getElementById('wingsWide').classList.add('bg-blue-500', 'text-white');
+                else if (planeConfig.wings === 'short') document.getElementById('wingsShort').classList.add('bg-blue-500', 'text-white');
+                if (planeConfig.tail === 'normal') document.getElementById('tailNormal').classList.add('bg-blue-500', 'text-white');
+                else if (planeConfig.tail === 'large') document.getElementById('tailLarge').classList.add('bg-blue-500', 'text-white');
+                
+                if (planeConfig.color === 0xcccccc) document.getElementById('colorSilver').classList.add('border-blue-500');
+                else if (planeConfig.color === 0xff0000) document.getElementById('colorRed').classList.add('border-blue-500');
+                else if (planeConfig.color === 0x00ff00) document.getElementById('colorGreen').classList.add('border-blue-500');
+                else if (planeConfig.color === 0x0000ff) document.getElementById('colorBlue').classList.add('border-blue-500');
+            }
+
+
+            // === INITIALIZATION ===
+            function init() {
+                // Scene
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x87CEEB); 
+                scene.fog = new THREE.Fog(0x87CEEB, 1000, 10000);
+
+                // Renderer
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.shadowMap.enabled = true;
+                document.body.appendChild(renderer.domElement);
+
+                // Camera
+                camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 20000); 
+                
+                // Lights
+                scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+                scene.add(new THREE.HemisphereLight(0x87CEEB, 0x008800, 0.6));
+ 
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+                directionalLight.position.set(100, 100, 100);
+                directionalLight.castShadow = true;
+                directionalLight.shadow.camera.top = 200;
+                directionalLight.shadow.camera.bottom = -200;
+                directionalLight.shadow.camera.left = -200;
+                directionalLight.shadow.camera.right = 200;
+                scene.add(directionalLight);
+
+                // Create materials
+                planeBodyMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+                planeWingMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa });
+                planeTailMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa });
+                planeEngineMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
+                
+                // Create main plane and editor plane
+                plane = new THREE.Group(); 
+                planeEditor = new THREE.Group(); 
+                rebuildPlane(plane, planeConfig); 
+                rebuildPlane(planeEditor, planeConfig); 
+                scene.add(plane); 
+
+                createGround();
+                createRunway(); 
+                createRoads();
+                createScenery(); // OPTIMIZED: Merges all geometries here
+
+                resetFlight();
+
+                window.addEventListener('resize', onWindowResize, false);
+                animate();
+            }
+
+            // Initializes the editor's 3D scene
+            function initEditorScene() {
+                const previewRect = editorPreview.getBoundingClientRect();
+                if (previewRect.width === 0 || previewRect.height === 0) {
+                    console.error("Editor preview area size is zero, skipping editor initialization.");
+                    return;
+                }
+
+                sceneEditor = new THREE.Scene();
+                sceneEditor.background = new THREE.Color(0xf0f0f0);
+                
+                cameraEditor = new THREE.PerspectiveCamera(50, previewRect.width / previewRect.height, 0.1, 1000);
+                cameraEditor.position.z = 25;
+
+                rendererEditor = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                rendererEditor.setSize(previewRect.width, previewRect.height);
+                editorPreview.appendChild(rendererEditor.domElement);
+
+                // Add lights to editor scene
+                sceneEditor.add(new THREE.AmbientLight(0xffffff, 0.8));
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                directionalLight.position.set(5, 10, 7.5);
+                sceneEditor.add(directionalLight);
+
+                sceneEditor.add(planeEditor); 
+            }
+
+            // Animation loop for the editor preview
+            function animateEditor() {
+                if (!rendererEditor) return; 
+                
+                editorAnimFrame = requestAnimationFrame(animateEditor);
+                
+                // Slowly rotate the preview plane
+                if (!isDragging) {
+                    editorOrbit += 0.005;
+                }
+                planeEditor.rotation.y = editorOrbit;
+
+                // Handle resizing of the preview window
+                const previewRect = editorPreview.getBoundingClientRect();
+                if (rendererEditor.domElement.width !== previewRect.width || rendererEditor.domElement.height !== previewRect.height) {
+                    rendererEditor.setSize(previewRect.width, previewRect.height);
+                    cameraEditor.aspect = previewRect.width / previewRect.height;
+                    cameraEditor.updateProjectionMatrix();
+                }
+                
+                rendererEditor.render(sceneEditor, cameraEditor);
+            }
+
+            // === OBJECT CREATION (Same logic, now optimized geometry) ===
+
+            function createPlane(targetPlane, config) {
+                while(targetPlane.children.length > 0){ 
+                    targetPlane.remove(targetPlane.children[0]); 
+                }
+
+                // Body 
+                const bodyGeo = new THREE.BoxGeometry(3, 2, 10);
+                setPlaneColor(config.color); 
+                const body = new THREE.Mesh(bodyGeo, planeBodyMaterial);
+                body.castShadow = true;
+                targetPlane.add(body);
+
+                // Wings
+                let wingWidth = 20;
+                if (config.wings === 'wide') wingWidth = 26;
+                else if (config.wings === 'short') wingWidth = 14;
+                const wingGeo = new THREE.BoxGeometry(wingWidth, 0.4, 2);
+                const wings = new THREE.Mesh(wingGeo, planeWingMaterial);
+                wings.castShadow = true;
+                targetPlane.add(wings);
+
+                // Tail Fin
+                let tailHeight = 4;
+                if (config.tail === 'large') tailHeight = 6;
+                const tailGeo = new THREE.BoxGeometry(0.5, tailHeight, 1);
+                const tail = new THREE.Mesh(tailGeo, planeTailMaterial);
+                tail.position.set(0, 1 + (tailHeight / 2), 4.5); 
+                tail.castShadow = true;
+                targetPlane.add(tail);
+
+                // Tail Wings (Horizontal) 
+                const hTailGeo = new THREE.BoxGeometry(8, 0.3, 1.5);
+                const hTail = new THREE.Mesh(hTailGeo, planeTailMaterial);
+                hTail.position.set(0, 0, 4.5); 
+                hTail.castShadow = true;
+                targetPlane.add(hTail);
+                
+                // Cockpit
+                let cockpitGeo;
+                if (config.cockpit === 'bubble') {
+                    cockpitGeo = new THREE.SphereGeometry(1.5, 16, 8);
+                    cockpitGeo.scale(1, 0.8, 1); 
+                } else { 
+                    cockpitGeo = new THREE.BoxGeometry(1.5, 1, 2);
+                }
+                const cockpitMat = new THREE.MeshStandardMaterial({ color: 0x333333, transparent: true, opacity: 0.8 });
+                const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+                cockpit.position.set(0, 1.5, -3); 
+                targetPlane.add(cockpit);
+
+                // Engines
+                const engineGeo = new THREE.CylinderGeometry(0.8, 0.6, 3);
+                if (config.engines === 'dual') {
+                    const engine1 = new THREE.Mesh(engineGeo, planeEngineMaterial);
+                    engine1.rotation.x = Math.PI / 2; 
+                    engine1.position.set(-5, -0.2, -1); 
+                    targetPlane.add(engine1);
+
+                    const engine2 = new THREE.Mesh(engineGeo, planeEngineMaterial);
+                    engine2.rotation.x = Math.PI / 2;
+                    engine2.position.set(5, -0.2, -1); 
+                    targetPlane.add(engine2);
+                } else { 
+                    const engine = new THREE.Mesh(engineGeo, planeEngineMaterial);
+                    engine.rotation.x = Math.PI / 2;
+                    engine.position.set(0, 0, -5); 
+                    targetPlane.add(engine);
+                }
+            }
+
+            function rebuildPlane(targetPlaneObject, config) {
+                if (!targetPlaneObject) return;
+                createPlane(targetPlaneObject, config); 
+            }
+
+            function updatePhysicsModifiers() {
+                physicsModifiers = {
+                    lift: 1.0, thrust: 1.0, drag: 1.0, rollSpeed: 1.0, pitchSpeed: 1.0, yawSpeed: 1.0
+                };
+
+                if (planeConfig.engines === 'dual') {
+                    physicsModifiers.thrust = 1.4;
+                    physicsModifiers.lift = 1.1; 
+                    physicsModifiers.drag = 1.2; 
+                }
+
+                if (planeConfig.wings === 'wide') {
+                    physicsModifiers.lift *= 1.3;
+                    physicsModifiers.rollSpeed = 0.7; 
+                    physicsModifiers.drag *= 1.1;
+                } else if (planeConfig.wings === 'short') {
+                    physicsModifiers.lift *= 0.7;
+                    physicsModifiers.rollSpeed = 1.4; 
+                }
+
+                if (planeConfig.tail === 'large') {
+                    physicsModifiers.pitchSpeed = 0.8; 
+                    physicsModifiers.yawSpeed = 0.8; 
+                }
+            }
+
+            function setPlaneColor(hexColor) {
+                if (planeBodyMaterial) {
+                    planeBodyMaterial.color.setHex(hexColor);
+                }
+            }
+
+            function createGround() {
+                const groundSize = 100000;
+                const canvas = document.createElement('canvas');
+                canvas.width = 128;
+                canvas.height = 128;
+                const context = canvas.getContext('2d');
+                context.fillStyle = '#006400'; 
+                context.fillRect(0, 0, 128, 128);
+                context.fillStyle = '#008800'; 
+                context.fillRect(0, 0, 64, 64);
+                context.fillRect(64, 64, 64, 64);
+
+                const groundTexture = new THREE.CanvasTexture(canvas);
+                groundTexture.wrapS = THREE.RepeatWrapping;
+                groundTexture.wrapT = THREE.RepeatWrapping;
+                groundTexture.repeat.set(groundSize / 128, groundSize / 128);
+
+                const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize);
+                const groundMat = new THREE.MeshStandardMaterial({ map: groundTexture, side: THREE.DoubleSide });
+                ground = new THREE.Mesh(groundGeo, groundMat);
+                ground.rotation.x = -Math.PI / 2; 
+                ground.receiveShadow = true;
+                scene.add(ground);
+            }
+
+            function createRunway() {
+                const runwayGeo = new THREE.PlaneGeometry(80, 1000); 
+                const runwayMat = new THREE.MeshStandardMaterial({ color: 0x444444, side: THREE.DoubleSide });
+                runway = new THREE.Mesh(runwayGeo, runwayMat);
+                runway.rotation.x = -Math.PI / 2;
+                runway.position.set(5000, 0.1, 5000); 
+                runway.receiveShadow = true;
+                scene.add(runway);
+            }
+
+            function createRoads() {
+                const roadMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }); 
+                const suburbRadius = 15000;
+                const streetWidth = 60;
+                const gridSize = GRID_SIZE; 
+                
+                const RUNWAY_X_MIN = 4960;
+                const RUNWAY_X_MAX = 5040;
+                const RUNWAY_Z_MIN = 4500;
+                const RUNWAY_Z_MAX = 5500;
+                
+                const startCoord = 5000 - suburbRadius; 
+                const endCoord = 5000 + suburbRadius;   
+                const center = 5000; 
+                const roadLength = endCoord - startCoord; 
+
+                const createStrip = (x, z, width, length, isHorizontal) => {
+                    const geo = new THREE.PlaneGeometry(isHorizontal ? length : width, isHorizontal ? width : length);
+                    const mesh = new THREE.Mesh(geo, roadMat);
+                    mesh.rotation.x = -Math.PI / 2;
+                    mesh.position.set(x, 0.05, z); 
+                    mesh.receiveShadow = true;
+                    scene.add(mesh);
+                };
+
+                const steps = Math.ceil(suburbRadius / gridSize);
+                
+                for (let i = -steps; i <= steps; i++) {
+                    const roadCoord = center + (i * gridSize); 
+
+                    // Vertical Roads
+                    const isVerticalIntersectingRunway = roadCoord > RUNWAY_X_MIN && roadCoord < RUNWAY_X_MAX;
+                    if (isVerticalIntersectingRunway) {
+                        const seg1Length = RUNWAY_Z_MIN - startCoord;
+                        const seg1CenterZ = startCoord + seg1Length / 2;
+                        createStrip(roadCoord, seg1CenterZ, streetWidth, seg1Length, false);
+
+                        const seg2Length = endCoord - RUNWAY_Z_MAX;
+                        const seg2CenterZ = RUNWAY_Z_MAX + seg2Length / 2;
+                        createStrip(roadCoord, seg2CenterZ, streetWidth, seg2Length, false);
+                    } else {
+                        createStrip(roadCoord, center, streetWidth, roadLength, false);
+                    }
+
+                    // Horizontal Roads
+                    const isHorizontalIntersectingRunway = roadCoord > RUNWAY_Z_MIN && roadCoord < RUNWAY_Z_MAX;
+                    if (isHorizontalIntersectingRunway) {
+                        const seg1Length = RUNWAY_X_MIN - startCoord;
+                        const seg1CenterX = startCoord + seg1Length / 2;
+                        createStrip(seg1CenterX, roadCoord, streetWidth, seg1Length, true);
+
+                        const seg2Length = endCoord - RUNWAY_X_MAX;
+                        const seg2CenterX = RUNWAY_X_MAX + seg2Length / 2;
+                        createStrip(seg2CenterX, roadCoord, streetWidth, seg2Length, true);
+                    } else {
+                        createStrip(center, roadCoord, streetWidth, roadLength, true);
+                    }
+                }
+            }
+            
+            // --- CRITICAL OPTIMIZATION: Merge Geometries & Build Spatial Grid ---
+            function createScenery() {
+                // Clear existing merged meshes if they exist
+                if (mergedBuildings) scene.remove(mergedBuildings);
+                if (mergedTrees) scene.remove(mergedTrees);
+                spatialGrid = {}; // Reset collision grid
+
+                const buildingGeometries = [];
+                const treeGeometries = [];
+                
+                // Geometry definitions
+                const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+                const coneGeo = new THREE.ConeGeometry(10, 25, 8); 
+                const houseGeo = new THREE.BoxGeometry(15, 10, 20); 
+                const sphereGeo = new THREE.SphereGeometry(5, 5, 6); 
+                
+                // Material definitions (used for final merged mesh)
+                const treeMat = new THREE.MeshStandardMaterial({ color: 0x228B22, vertexColors: true });
+                const buildingMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
+
+                // Grid definitions
+                const cityCenter = { x: 5000, z: 5000 };
+                const cityRadius = 6000;
+                const suburbRadius = 15000;
+                const streetWidth = 60;
+                const blockWidth = 250;
+                const gridSize = GRID_SIZE; // 310
+
+                // Runway Bounds
+                const RUNWAY_X_MIN = 4960;
+                const RUNWAY_X_MAX = 5040;
+                const RUNWAY_Z_MIN = 4500;
+                const RUNWAY_Z_MAX = 5500;
+
+                const subGridStep = 50; 
+                const subGridStart = -(blockWidth / 2); 
+
+                // Function to add an object to the merge list and spatial grid
+                const spawnAndMerge = (type, x, z) => {
+                    let geo, color, scaleY, meshHeight, baseColor;
+                    let targetGeometries = (type === 'city' || type === 'house') ? buildingGeometries : treeGeometries;
+                    let objType = (type === 'city' || type === 'house') ? 'building' : 'tree';
+
+                    if (type === 'city') {
+                        baseColor = new THREE.Color(Math.random() * 0xaaaaaa + 0x555555);
+                        geo = boxGeo;
+                        const w = Math.random() * 20 + 10; 
+                        const h = Math.random() * 400 + 50;
+                        const d = Math.random() * 20 + 10; 
+                        meshHeight = h;
+                        scaleY = h;
+                        
+                        // Create temporary geometry and apply transformation
+                        const tempGeo = geo.clone();
+                        const matrix = new THREE.Matrix4().compose(
+                            new THREE.Vector3(x, h / 2, z),
+                            new THREE.Quaternion().identity(),
+                            new THREE.Vector3(w, h, d)
+                        );
+                        tempGeo.applyMatrix4(matrix);
+
+                        // Set vertex colors for the merged mesh
+                        const numFaces = tempGeo.attributes.position.count / 3;
+                        const colorsArray = [];
+                        for (let i = 0; i < numFaces; i++) {
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                        }
+                        tempGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colorsArray), 3));
+                        
+                        targetGeometries.push(tempGeo);
+                    } else if (type === 'house') {
+                        baseColor = new THREE.Color(Math.random() * 0xaaaaaa + 0x555555);
+                        geo = houseGeo;
+                        const scale = Math.random() * 0.4 + 0.6;
+                        meshHeight = 10 * scale;
+                        
+                        // Create temporary geometry and apply transformation
+                        const tempGeo = geo.clone();
+                         const matrix = new THREE.Matrix4().compose(
+                            new THREE.Vector3(x, meshHeight / 2, z),
+                            new THREE.Quaternion().identity(),
+                            new THREE.Vector3(scale, scale, scale)
+                        );
+                        tempGeo.applyMatrix4(matrix);
+
+                        // Set vertex colors
+                        const numFaces = tempGeo.attributes.position.count / 3;
+                        const colorsArray = [];
+                        for (let i = 0; i < numFaces; i++) {
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                        }
+                        tempGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colorsArray), 3));
+
+                        targetGeometries.push(tempGeo);
+                    } else if (type === 'tree') {
+                        baseColor = new THREE.Color(0x228B22); // Tree color
+                        geo = coneGeo;
+                        const scale = Math.random() * 0.5 + 0.8;
+                        meshHeight = 25 * scale;
+
+                        // Create temporary geometry and apply transformation
+                        const tempGeo = geo.clone();
+                         const matrix = new THREE.Matrix4().compose(
+                            new THREE.Vector3(x, meshHeight / 2, z),
+                            new THREE.Quaternion().identity(),
+                            new THREE.Vector3(1, scale, 1)
+                        );
+                        tempGeo.applyMatrix4(matrix);
+
+                        // Set vertex colors (can be simplified since material is fixed, but for completeness)
+                        const numFaces = tempGeo.attributes.position.count / 3;
+                        const colorsArray = [];
+                        for (let i = 0; i < numFaces; i++) {
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                            colorsArray.push(baseColor.r, baseColor.g, baseColor.b);
+                        }
+                        tempGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colorsArray), 3));
+
+                        targetGeometries.push(tempGeo);
+                    } 
+                    
+                    // --- Spatial Grid Collision Data ---
+                    // Create a collision object for the grid (uses simplified bounding box)
+                    if (meshHeight) {
+                         const collisionObj = {
+                            bbox: new THREE.Box3(
+                                new THREE.Vector3(x - 10, 0, z - 10),
+                                new THREE.Vector3(x + 10, meshHeight, z + 10)
+                            ),
+                            center: new THREE.Vector3(x, meshHeight / 2, z)
+                        };
+
+                        // Calculate grid cell index
+                        const gridX = Math.floor(x / gridSize);
+                        const gridZ = Math.floor(z / gridSize);
+                        const key = `${gridX},${gridZ}`;
+
+                        if (!spatialGrid[key]) {
+                            spatialGrid[key] = [];
+                        }
+                        spatialGrid[key].push(collisionObj);
+                    }
+                };
+                
+                // --- GRID-BASED GENERATION (Visuals will be high-density, but Draw Calls low) ---
+                const halfGridRange = Math.ceil(suburbRadius / gridSize);
+                
+                for (let i = -halfGridRange; i <= halfGridRange; i++) {
+                    for (let j = -halfGridRange; j <= halfGridRange; j++) {
+                        
+                        const blockX = cityCenter.x + (i * gridSize);
+                        const blockZ = cityCenter.z + (j * gridSize);
+                        const distToCenter = Math.sqrt(Math.pow(blockX - cityCenter.x, 2) + Math.pow(blockZ - cityCenter.z, 2));
+
+                        for (let sub_i = 0; sub_i < blockWidth / subGridStep; sub_i++) {
+                            for (let sub_j = 0; sub_j < blockWidth / subGridStep; sub_j++) {
+                                
+                                const offsetX = subGridStart + sub_i * subGridStep; 
+                                const offsetZ = subGridStart + sub_j * subGridStep;
+                                const jitter = 10;
+                                const spawnX = blockX + offsetX + (Math.random() * jitter * 2) - jitter;
+                                const spawnZ = blockZ + offsetZ + (Math.random() * jitter * 2) - jitter;
+
+                                const isRunwayBlock = (spawnX > RUNWAY_X_MIN && spawnX < RUNWAY_X_MAX && spawnZ > RUNWAY_Z_MIN && spawnZ < RUNWAY_Z_MAX);
+                                const streetTolerance = streetWidth / 2; 
+                                const isTooCloseToXRoad = Math.abs(blockX - spawnX) < streetTolerance;
+                                const isTooCloseToZRoad = Math.abs(blockZ - spawnZ) < streetTolerance;
+                                
+                                if (isRunwayBlock || isTooCloseToXRoad || isTooCloseToZRoad) continue;
+
+                                if (distToCenter < cityRadius) {
+                                    if (Math.random() < 0.9) {
+                                        spawnAndMerge('city', spawnX, spawnZ);
+                                    } else {
+                                         spawnAndMerge('tree', spawnX, spawnZ);
+                                    }
+                                } else if (distToCenter < suburbRadius) {
+                                    if (Math.random() < 0.6) { 
+                                        spawnAndMerge('house', spawnX, spawnZ);
+                                    } else { 
+                                        spawnAndMerge('tree', spawnX, spawnZ);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // --- MERGE ALL GEOMETRIES ---
+                
+                if (buildingGeometries.length > 0) {
+                    const mergedBuildingGeo = mergeBufferGeometries(buildingGeometries);
+                    mergedBuildings = new THREE.Mesh(mergedBuildingGeo, buildingMat);
+                    mergedBuildings.castShadow = true;
+                    scene.add(mergedBuildings);
+                    console.log(`Merged ${buildingGeometries.length} building/house objects into one mesh.`);
+                }
+
+                if (treeGeometries.length > 0) {
+                    const mergedTreeGeo = mergeBufferGeometries(treeGeometries);
+                    mergedTrees = new THREE.Mesh(mergedTreeGeo, treeMat);
+                    mergedTrees.castShadow = true;
+                    scene.add(mergedTrees);
+                    console.log(`Merged ${treeGeometries.length} tree objects into one mesh.`);
+                }
+            }
+
+            // --- OPTIMIZED: Get only nearby collision objects from the spatial grid ---
+            function getNearbyCollisionObjects(position) {
+                const results = [];
+                const gridX = Math.floor(position.x / GRID_SIZE);
+                const gridZ = Math.floor(position.z / GRID_SIZE);
+
+                // Check 3x3 surrounding cells
+                for (let i = -1; i <= 1; i++) {
+                    for (let j = -1; j <= 1; j++) {
+                        const key = `${gridX + i},${gridZ + j}`;
+                        if (spatialGrid[key]) {
+                            results.push(...spatialGrid[key]);
+                        }
+                    }
+                }
+                return results;
+            }
+            
+            // === CORE LOGIC & ANIMATION ===
+            
+            function resetFlight() {
+                // Reset config and rebuild plane
+                planeConfig = {
+                    engines: 'single', cockpit: 'sleek', wings: 'normal', tail: 'normal', color: 0xcccccc
+                };
+                rebuildPlane(plane, planeConfig); 
+                updatePhysicsModifiers();
+                
+                plane.position.set(5000, 2, 5100); 
+                plane.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI); 
+                plane.visible = true; 
+
+                for (let i = explosionParticles.length - 1; i >= 0; i--) {
+                    scene.remove(explosionParticles[i]);
+                }
+                explosionParticles = [];
+
+                isCrashed = false;
+                crashModal.classList.add('hidden');
+
+                speed = 0.0;
+                throttle = 0.0; 
+                pitchSpeed = 0;
+                rollSpeed = 0;
+                yawSpeed = 0;
+                isStalling = false;
+                stallWarning.classList.add('hidden');
+                takeoffHint.classList.add('hidden'); 
+                modifyButton.classList.remove('hidden'); 
+            }
+            
+            function handleInput(deltaTime) {
+                if (!modifyModal.classList.contains('hidden')) return;
+
+                const throttleSensitivity = 0.1 * deltaTime;
+                if (keys['ShiftLeft']) throttle = Math.min(throttle + throttleSensitivity, 1.0);
+                if (keys['ControlLeft']) throttle = Math.max(throttle - throttleSensitivity, 0.0);
+
+                let currentSensitivity = (isStalling ? 0.01 : 0.05);
+                const rotationSpeed = 1.5 * deltaTime;
+ 
+                // Pitch (W/S)
+                let pitchSensitivity = currentSensitivity * physicsModifiers.pitchSpeed;
+                
+                const takeoffSpeed = 2.6;
+                const canPitchUp = (speed > takeoffSpeed) || (plane.position.y > 5.0); 
+
+                if (keys['KeyW']) {
+                    if (canPitchUp) {
+                        pitchSpeed -= pitchSensitivity * deltaTime; 
+                        takeoffHint.classList.add('hidden');
+                    } else {
+                        if (plane.position.y < 5.0) takeoffHint.classList.remove('hidden');
+                    }
+                } else {
+                    takeoffHint.classList.add('hidden');
+                }
+                
+                if (keys['KeyS']) pitchSpeed += pitchSensitivity * deltaTime; 
+                
+                if (!keys['KeyW'] && !keys['KeyS']) pitchSpeed *= 0.95; 
+ 
+                // Roll (A/D)
+                let rollSensitivity = currentSensitivity * physicsModifiers.rollSpeed;
+                if (keys['KeyA']) rollSpeed += rollSensitivity * deltaTime;
+                else if (keys['KeyD']) rollSpeed -= rollSensitivity * deltaTime;
+                else rollSpeed *= 0.95; 
+ 
+                // Yaw (Q/E)
+                let yawSensitivity = currentSensitivity * physicsModifiers.yawSpeed;
+                if (keys['KeyQ']) yawSpeed += yawSensitivity * deltaTime;
+                else if (keys['KeyE']) yawSpeed -= yawSensitivity * deltaTime;
+                else yawSpeed *= 0.95; 
+                 
+                pitchSpeed = Math.max(-rotationSpeed, Math.min(pitchSpeed, rotationSpeed));
+                rollSpeed = Math.max(-rotationSpeed, Math.min(rollSpeed, rotationSpeed));
+                yawSpeed = Math.max(-rotationSpeed, Math.min(yawSpeed, rotationSpeed));
+            }
+            
+            function updatePlanePhysics(deltaTime) {
+                if (!modifyModal.classList.contains('hidden')) return;
+
+                plane.rotation.order = 'YXZ';
+                
+                plane.rotateX(pitchSpeed); 
+                plane.rotateZ(rollSpeed);  
+                plane.rotateY(yawSpeed);   
+
+                // Acceleration and Drag
+                const MAX_SPEED = 10.0; 
+                const acceleration = 0.8 * physicsModifiers.thrust * throttle; 
+                const drag = 0.5 * (speed / MAX_SPEED) * physicsModifiers.drag;
+                
+                speed += (acceleration - drag) * deltaTime;
+                speed = Math.max(0.0, Math.min(speed, MAX_SPEED));
+
+                // Movement
+                const direction = new THREE.Vector3(0, 0, -1);
+                direction.applyQuaternion(plane.quaternion);
+                const velocity = direction.multiplyScalar(speed);
+                plane.position.add(velocity);
+
+                // Lift, Gravity, and Stall
+                const gravity = 0.1 * physicsModifiers.drag; 
+                const euler = new THREE.Euler().setFromQuaternion(plane.quaternion, 'YXZ');
+                const pitchAngle = euler.x;
+
+                const stallSpeed = 0.8 / (physicsModifiers.lift * 0.8);
+                if (plane.position.y > 2.0) { 
+                    if (speed < stallSpeed || Math.abs(pitchAngle) > 0.6) { 
+                        isStalling = true;
+                        stallWarning.classList.remove('hidden');
+                    } else {
+                        isStalling = false;
+                        stallWarning.classList.add('hidden');
+                    }
+                } else {
+                    isStalling = false;
+                    stallWarning.classList.add('hidden');
+                }
+ 
+                let lift;
+                if (isStalling) {
+                    lift = speed * 0.01 * physicsModifiers.lift; 
+                    plane.rotateX(0.005); 
+                } else {
+                    lift = (speed * 0.04) * physicsModifiers.lift;
+                }
+                
+                if (plane.position.y > 1.0) {
+                    plane.position.y += (lift - gravity);
+                } else {
+                    plane.position.y = 1.0;
+                    if (pitchAngle > 0) {
+                         plane.rotation.x *= 0.9;
+                    }
+                }
+ 
+                // Check for ground crash
+                if (plane.position.y <= 1.0 && (Math.abs(pitchAngle) > 0.5 || Math.abs(rollSpeed) > 0.01)) { 
+                    plane.position.y = 1.0;
+                    showCrashModal("CRASHED!", "You've hit the ground too hard.");
+                    return;
+                }
+
+                // --- OPTIMIZED: Collision Check using Spatial Grid ---
+                const nearbyObjects = getNearbyCollisionObjects(plane.position);
+                planeBBox.setFromObject(plane);
+
+                for (let i = 0; i < nearbyObjects.length; i++) {
+                    const obj = nearbyObjects[i];
+                    sceneryBBox.copy(obj.bbox);
+                    
+                    if (planeBBox.intersectsBox(sceneryBBox)) {
+                        showCrashModal("COLLISION!", "You've crashed into an object.");
+                        return; 
+                    }
+                }
+            }
+
+            function showCrashModal(title, message) {
+                if (isCrashed) return; 
+                isCrashed = true;
+
+                createExplosion(plane.position);
+                plane.visible = false; 
+                modifyButton.classList.add('hidden'); 
+
+                setTimeout(() => {
+                    crashTitle.innerText = title;
+                    crashMessage.innerText = message;
+                    crashModal.classList.remove('hidden');
+                }, 1500); 
+            }
+
+            function createExplosion(position) {
+                const particleCount = 50;
+                const particleGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5); 
+                const colors = [0xff4500, 0xffa500, 0xf0e68c, 0x808080]; 
+
+                for (let i = 0; i < particleCount; i++) {
+                    const particleMat = new THREE.MeshStandardMaterial({ 
+                        color: colors[Math.floor(Math.random() * colors.length)]
+                    });
+                    const particle = new THREE.Mesh(particleGeo, particleMat);
+                    particle.position.copy(position);
+
+                    particle.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 10,
+                        (Math.random() * 10) + 5, 
+                        (Math.random() - 0.5) * 10
+                    );
+                    particle.lifespan = Math.random() * 2 + 1; 
+
+                    scene.add(particle);
+                    explosionParticles.push(particle);
+                }
+            }
+
+            function updateCamera() {
+                const offset = new THREE.Vector3(0, 8, 35);
+                const cameraPosition = offset.applyMatrix4(plane.matrixWorld);
+
+                camera.position.lerp(cameraPosition, 0.2);
+ 
+                const lookAtPoint = new THREE.Vector3(0, 3, 0);
+                const lookAtWorld = lookAtPoint.applyMatrix4(plane.matrixWorld);
+                
+                camera.lookAt(lookAtWorld);
+
+                const planeUp = new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion);
+                camera.up.lerp(planeUp, 0.05);
+            }
+            
+            function updateHUD() {
+                const scaledSpeed = (speed * 50).toFixed(0);
+                const scaledAltitude = (plane.position.y * 10).toFixed(0);
+                const throttlePct = (throttle * 100).toFixed(0);
+                
+                speedDisplay.innerText = scaledSpeed;
+                altitudeDisplay.innerText = scaledAltitude;
+                throttleDisplay.innerText = throttlePct;
+            }
+
+            // Animation Loop
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                const deltaTime = clock.getDelta();
+
+                if (isCrashed) {
+                    // Only render particles
+                } else {
+                    if (plane.position.y < 5.0 && speed < 0.5) {
+                        modifyButton.classList.remove('hidden');
+                    } else {
+                        modifyButton.classList.add('hidden');
+                    }
+
+                    if (!modifyModal.classList.contains('hidden')) {
+                        return; 
+                    }
+                    
+                    handleInput(deltaTime);
+                    updatePlanePhysics(deltaTime);
+                }
+
+                // Update explosion particles
+                for (let i = explosionParticles.length - 1; i >= 0; i--) {
+                    const particle = explosionParticles[i];
+                    
+                    particle.velocity.y -= 9.8 * deltaTime;
+                    particle.position.add(particle.velocity.clone().multiplyScalar(deltaTime));
+                    
+                    particle.scale.multiplyScalar(0.98);
+
+                    particle.lifespan -= deltaTime;
+                    if (particle.lifespan <= 0) {
+                        scene.remove(particle);
+                        explosionParticles.splice(i, 1);
+                    }
+                }
+                
+                updateCamera();
+                updateHUD();
+
+                renderer.render(scene, camera);
+            }
+
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+
+                if (rendererEditor) {
+                    const previewRect = editorPreview.getBoundingClientRect();
+                    rendererEditor.setSize(previewRect.width, previewRect.height);
+                    cameraEditor.aspect = previewRect.width / previewRect.height;
+                    cameraEditor.updateProjectionMatrix();
+                }
+            }
+
+            // Start the simulation
+            init();
+        };
+    </script>
+
+</body>
+</html>
